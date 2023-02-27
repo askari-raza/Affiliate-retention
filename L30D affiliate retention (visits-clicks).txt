@@ -1,0 +1,38 @@
+WITH L30_active_visits AS 
+(
+    ------------------L30D_ACTIVE----------------------------------------
+    SELECT  a.affiliate_id
+            ,a.affiliate_name
+            ,a.venture
+            ,a.segment_type
+            ,b.ds
+            ,b.click_amount
+    FROM    daraz_cdm.dwd_drz_mkt_affiliate_publiser a
+    LEFT JOIN daraz_cdm.dws_drz_mkt_affiliate_click_1d AS b
+    ON      a.affiliate_id = b.affiliate_id
+    AND     a.venture = b.venture
+    WHERE   a.ds = MAX_PT('daraz_cdm.dwd_drz_mkt_affiliate_publiser')
+    AND     a.segment_type = 'Influencer'
+    AND     a.venture IN ('PK','LK','BD')
+    AND     b.click_amount > 1
+    AND     b.ds >= 20220101
+)
+SELECT  month_num
+        ,venture
+        ,SUM(CASE WHEN affiliate_id IS NOT NULL AND prev IS NOT NULL THEN tot_affiliates END) AS retained_affiliates
+        ,COUNT(DISTINCT prev) alternate
+        ,COUNT(DISTINCT CASE WHEN prev IS NULL THEN affiliate_id END) AS not_retained
+FROM    (
+            SELECT  SUBSTR(ds,1,6) AS month_num
+                    ,venture
+                    ,affiliate_id
+                    ,COUNT(DISTINCT affiliate_id) tot_affiliates
+                    ,LAG(affiliate_id,1) OVER (PARTITION BY affiliate_id ORDER BY SUBSTR(ds,1,6) ASC ) prev
+            FROM    L30_active_visits
+            GROUP BY SUBSTR(ds,1,6)
+                     ,venture
+                     ,affiliate_id
+        ) 
+GROUP BY venture
+         ,month_num
+;

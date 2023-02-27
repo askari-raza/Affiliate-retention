@@ -1,0 +1,105 @@
+WITH industry_level_item_level AS 
+(
+    SELECT  c.*
+            ,f.product_id
+            ,f.brand_id
+            ,f.brand_name
+            ,f.seller_id
+            ,f.business_type
+            ,f.business_area
+            ,f.venture_category1_name_en
+            ,CASE   WHEN f.venture_category1_name_en IN ('Cameras','Computers & Laptops','Home Appliances','Mobiles & Tablets','TV, Audio / Video, Gaming & Wearables','TV Audio Video Gaming & Wearables','TV Audio Video Gaming & Wearables') THEN 'EL'
+                    WHEN f.venture_category1_name_en IN ('Bags and Travel','Fashion','Watches Sunglasses Jewellery') THEN 'Fashion'
+                    WHEN f.venture_category1_name_en IN ('Bedding & Bath','Toys Kids & Babies','Charity and Donation','Furniture & Décor','Furniture & DÃcor','Furniture & Decor','Furniture & D√cor','Home & Living','Kitchen & Dining','Laundry & Cleaning','Media, Music & Books','Media Music & Books','Motors','Sports & Outdoors','Stationery & Craft','Tools, DIY & Outdoor','Tools DIY & Outdoor','Toys & Games','Wholesale','Packaging Material',"Special Promotion") THEN 'Lifestyle'
+                    WHEN f.venture_category1_name_en IN ('Groceries','Health & Beauty','Mother & Baby','Pet Supplies','Medicine','Livestock','Sample') THEN 'FMCG'
+                    WHEN f.venture_category1_name_en IN ('Digital Goods','Topup','Service Product','Special Digital Products') THEN 'Digital Goods'
+                    ELSE 'Other'
+            END AS industry_name
+    FROM    (
+                SELECT  a.affiliate_id
+                        ,a.affiliate_name
+                        ,a.venture
+                        ,a.segment_type
+                        ,b.order_id
+                        ,b.item_id
+                        ,b.buyer_id
+                        ,b.gmv
+                        ,b.is_new_buyer
+                        ,b.order_fulfillment_date
+                FROM    (
+                            SELECT  *
+                            FROM    daraz_cdm.dwd_drz_mkt_affiliate_publiser
+                            WHERE   segment_type = 'Influencer'
+                            AND     ds = MAX_PT('daraz_cdm.dwd_drz_mkt_affiliate_publiser')
+                            AND     venture IN ('PK','LK','BD')
+                        ) AS a
+                LEFT JOIN   (
+                                SELECT  *
+                                FROM    daraz_cdm.dwd_drz_mkt_attributed_event_sales_df
+                                WHERE   ds = MAX_PT('daraz_cdm.dwd_drz_mkt_attributed_event_sales_df')
+                                AND     order_fulfillment_date >= 20220301
+                                AND     venture IN ('PK','BD','LK')
+                            ) AS b
+                ON      a.affiliate_id = b.tracker_id
+                AND     a.venture = b.venture
+            ) AS c
+    LEFT JOIN   (
+                    SELECT  sales_order_id
+                            ,sales_order_item_id
+                            ,product_name
+                            ,product_id
+                            ,brand_id
+                            ,brand_name
+                            ,seller_id
+                            ,business_type
+                            ,business_area
+                            ,venture
+                            ,venture_category1_name_en
+                    FROM    daraz_cdm.dwd_drz_trd_core_df
+                    WHERE   ds = MAX_PT('daraz_cdm.dwd_drz_trd_core_df')
+                    AND     venture IN ('PK','BD','LK')
+                    AND     TO_CHAR(fulfillment_create_date,"yyyymmdd") >= 20220301
+                ) AS f
+    ON      c.order_id = f.sales_order_id
+    AND     c.item_id = f.sales_order_item_id
+    AND     c.venture = f.venture
+)
+,monthly_affil_performance AS 
+(
+    SELECT  affiliate_id AS affil_id
+            ,COUNT(DISTINCT order_id) AS orders
+            ,COUNT(DISTINCT item_id) AS items_
+            ,SUM(gmv) AS gmv_
+            ,SUBSTR(order_fulfillment_date,1,6) AS month_num
+            ,venture
+    FROM    industry_level_item_level
+    GROUP BY affiliate_id
+             ,SUBSTR(order_fulfillment_date,1,6)
+             ,venture
+)
+SELECT  month_num
+        ,venture
+        ,SUM(CASE WHEN affil_id IS NOT NULL AND prev IS NOT NULL THEN tot_affiliates END) AS retained_affiliates
+        ,COUNT(DISTINCT prev) alternate
+        ,COUNT(DISTINCT CASE WHEN prev IS NULL THEN affil_id END) AS not_retained
+        ,COUNT(DISTINCT prev) / (
+                    COUNT(DISTINCT prev) + COUNT(DISTINCT CASE WHEN prev IS NULL THEN affil_id END)
+        ) AS retention_rate
+FROM    (
+            SELECT  month_num
+                    ,venture
+                    ,affil_id
+                    ,COUNT(DISTINCT affil_id) tot_affiliates
+                    ,LAG(affil_id,1) OVER (PARTITION BY affil_id ORDER BY month_num ASC ) prev
+            FROM    (
+                        SELECT  *
+                        FROM    monthly_affil_performance
+                        WHERE   gmv_ IS NOT NULL
+                    ) 
+            GROUP BY month_num
+                     ,venture
+                     ,affil_id
+        ) 
+GROUP BY venture
+         ,month_num
+;
